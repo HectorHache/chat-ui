@@ -1,0 +1,10 @@
+# secrets & runtime (never tracked)
+.webui_secret_key
+*.key
+*.pem
+.env*
+data/
+logs/
+backups/
+certs/
+env/
