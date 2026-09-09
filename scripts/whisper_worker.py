@@ -1,5 +1,5 @@
 """
-whisper_worker — persistent local STT server for Chat·hache (B40).
+whisper_worker — persistent local STT server for Chat·hector (B40).
 
 Serves a single OpenAI-compatible-ish endpoint on 127.0.0.1:8499 used by the
 bridge as the OFFLINE fallback for /v1/audio/transcriptions (Groq primary):

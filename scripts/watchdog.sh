@@ -77,7 +77,7 @@ if [[ "$TODAY" > "$CREDIT_START" || "$TODAY" == "$CREDIT_START" ]] && [[ "$TODAY
     touch "$marker"
     msg="AgentRouter credits expire 2026-11-22 — top up soon (daily reminder)."
     log_alert "CREDIT-WARN $msg"
-    notify "Chat·hache credits" "$msg"
+    notify "Chat·hector credits" "$msg"
   fi
 fi
 
@@ -99,7 +99,7 @@ if [ "$overall" = "degraded" ]; then
   if [ "$prev" != "degraded" ]; then
     msg="chat.hector.app=${chat_ok} localhost:8383=${local_ok} bridge:8484=${bridge_ok}"
     log_alert "DEGRADED $msg"
-    notify "Chat·hache watchdog" "Service degraded: $msg"
+    notify "Chat·hector watchdog" "Service degraded: $msg"
   fi
 fi
 echo "$overall" > "$WD_DIR/previous-overall"
