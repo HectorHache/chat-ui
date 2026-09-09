@@ -177,7 +177,7 @@ def render_html(agg: dict) -> str:
 
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<title>Chat·hache — Usage Report</title>
+<title>Chat·hector — Usage Report</title>
 <style>
  body {{ font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 2rem auto; max-width: 860px; color: #222; }}
  h1 {{ font-size: 1.5rem; }} h2 {{ font-size: 1.15rem; margin-top: 2rem; }}
@@ -187,7 +187,7 @@ def render_html(agg: dict) -> str:
  .card {{ background: #f6f7f9; border-radius: 8px; padding: 1rem 1.2rem; margin: .5rem 0; }}
  .muted {{ color: #666; font-size: .85rem; }}
 </style></head><body>
-<h1>Chat·hache — Usage Report</h1>
+<h1>Chat·hector — Usage Report</h1>
 <p class="muted">Generated {agg['generated_at']} · first usage {agg['first_usage_at'] or '—'} · last {agg['last_usage_at'] or '—'}</p>
 <div class="card">
  <b>{total['calls']}</b> calls · <b>{fmt_tokens(total['total_tokens'])}</b> tokens

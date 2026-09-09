@@ -111,7 +111,7 @@ def check_reminders() -> int:
                 text = str(item.get("text", "reminder"))
                 user = f.stem
                 log_alert(f"REMINDER due ({user}): {text}")
-                notify("Chat·hache reminder", f"{text} (user: {user})")
+                notify("Chat·hector reminder", f"{text} (user: {user})")
         if changed:
             f.write_text(json.dumps(items, ensure_ascii=False, indent=2), "utf-8")
     return delivered
@@ -169,7 +169,7 @@ def check_prices() -> int:
                 name = str(item.get("name", url))
                 user = f.stem
                 log_alert(f"PRICE-ALERT ({user}): {name} now {price:.2f} (target <= {item.get('target_price')})")
-                notify("Chat·hache price watch", f"{name}: now {price:.2f} (target <= {item.get('target_price')})")
+                notify("Chat·hector price watch", f"{name}: now {price:.2f} (target <= {item.get('target_price')})")
             elif item.get("last_price") != price:
                 changed = True
         if changed:
@@ -211,7 +211,7 @@ def main() -> int:
                 credit_warn = 1
                 marker.touch()
                 log_alert(f"CREDIT-WARN {wmsg}")
-                notify("Chat·hache credits", wmsg)
+                notify("Chat·hector credits", wmsg)
 
     status = {
         "checked_at": now_iso(),
@@ -257,7 +257,7 @@ def main() -> int:
         if prev != "degraded":
             msg = f"chat.hector.app={int(chat_ok)} localhost:8383={int(local_ok)} bridge:8484={int(bridge_ok)}"
             log_alert(f"DEGRADED {msg}")
-            notify("Chat·hache watchdog", f"Service degraded: {msg}")
+            notify("Chat·hector watchdog", f"Service degraded: {msg}")
     PREV_FILE.write_text(overall)
 
     return 0
