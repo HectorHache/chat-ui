@@ -1,0 +1,33 @@
+# Chat · hache.app — TLS terminator (root daemon config)
+# Installed from ui/Caddyfile by scripts/gen-plists.sh to
+# /opt/homebrew/etc/chat-hache/Caddyfile (TCC-safe for the root daemon;
+# files under ~/Documents are TCC-blocked for root).
+# Two sites:
+#  1. https://localhost:8383  — local access on the Mac (mkcert local CA)
+#  2. https://chat.hache.app  — tailnet-only domain, Let's Encrypt via
+#     DNS-01 (Porkbun API), bound to the Mac Mini tailnet IP.
+# B9: loopback + tailnet bindings only. B12: DNS via NextDNS Rewrite.
+# Storage: XDG_DATA_HOME=/opt/homebrew/var/lib (env in root plist) → certs at
+# /opt/homebrew/var/lib/caddy (writable, TCC-safe).
+
+{
+	admin off
+	auto_https disable_redirects
+}
+
+https://localhost:8383 {
+	bind 127.0.0.1 ::1
+	tls /opt/homebrew/etc/chat-hache/certs/localhost.pem /opt/homebrew/etc/chat-hache/certs/localhost-key.pem
+	reverse_proxy 127.0.0.1:8390
+}
+
+chat.hache.app {
+	bind {$CHAT_TAILNET_IP}
+	tls {
+		dns porkbun {
+			api_key {$PORKBUN_API_KEY}
+			api_secret_key {$PORKBUN_API_SECRET}
+		}
+	}
+	reverse_proxy 127.0.0.1:8390
+}
