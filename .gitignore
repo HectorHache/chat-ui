@@ -8,3 +8,4 @@ logs/
 backups/
 certs/
 env/
+.DS_Store
