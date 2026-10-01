@@ -12,8 +12,8 @@ register-tools.py — Register the household tool library in Open WebUI.
 - Requires DATA_DIR + WEBUI_SECRET_KEY (or WEBUI_SECRET_KEY_FILE) env.
 
 Usage:
-    DATA_DIR=/Users/mick/Documents/Workspaces/ui/data \
-    WEBUI_SECRET_KEY_FILE=/Users/mick/Documents/Workspaces/ui/.webui_secret_key \
+    DATA_DIR=~/Documents/Workspaces/ui/data \
+    WEBUI_SECRET_KEY_FILE=~/Documents/Workspaces/ui/.webui_secret_key \
     env/bin/python scripts/register-tools.py
 """
 

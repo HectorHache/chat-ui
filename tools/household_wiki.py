@@ -9,7 +9,7 @@ import json
 import urllib.parse
 import urllib.request
 
-_UA = "Chat-hache-household/1.0 (private home assistant)"
+_UA = "Chat-hector-household/1.0 (private home assistant)"
 
 
 class Tools:

@@ -20,7 +20,7 @@
 # ============================================================================
 set -u
 
-DATA_DIR="${DATA_DIR:-/Users/mick/Documents/Workspaces/ui/data}"
+DATA_DIR="${DATA_DIR:-$HOME/Documents/Workspaces/ui/data}"
 WD_DIR="$DATA_DIR/watchdog"
 mkdir -p "$WD_DIR"
 
@@ -53,7 +53,7 @@ log_alert() { # log_alert <line>
 chat_ok=0; probe "$CHAT_HEALTH" 8 && chat_ok=1
 local_ok=0; probe "$LOCAL_HEALTH" 8 && local_ok=1
 bridge_ok=0
-BRIDGE_KEY=$(grep '^BRIDGE_API_KEY=' /Users/mick/Documents/Workspaces/ui/.env | cut -d= -f2)
+BRIDGE_KEY=$(grep '^BRIDGE_API_KEY=' $HOME/Documents/Workspaces/ui/.env | cut -d= -f2)
 bridge_json=$(curl -s -m 8 -H "Authorization: Bearer $BRIDGE_KEY" "$BRIDGE_HEALTH" 2>/dev/null || echo "")
 case "$bridge_json" in
   *'"status":"ok"'*) bridge_ok=1 ;;

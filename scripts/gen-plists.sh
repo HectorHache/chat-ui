@@ -2,17 +2,17 @@
 # Chat · hector.app — regenerate launchd plists + root config from .env
 # Usage: scripts/gen-plists.sh
 # Emits:
-#   ~/Library/LaunchAgents/org.hache.chat.openwebui.plist    (user agent, env from .env)
-#   /opt/homebrew/etc/chat-hache/Caddyfile                    (TCC-safe copy for root daemon)
-#   /opt/homebrew/etc/chat-hache/certs/*.pem                  (TCC-safe cert copies)
-#   /tmp/org.hache.chat.caddy.root.plist                     (root daemon plist;
+#   ~/Library/LaunchAgents/app.hector.chat.openwebui.plist    (user agent, env from .env)
+#   /opt/homebrew/etc/chat-hector/Caddyfile                    (TCC-safe copy for root daemon)
+#   /opt/homebrew/etc/chat-hector/certs/*.pem                  (TCC-safe cert copies)
+#   /tmp/app.hector.chat.caddy.root.plist                     (root daemon plist;
 #                                                             install: sudo cp + bootout/bootstrap)
 # .env stays the single source of truth for secrets.
 #
 # TCC note (verified 2026-08-31): the ROOT daemon cannot read/write anything under
 # ~/Documents (macOS TCC). Its config, certs and logs therefore live outside:
-#   config+certs -> /opt/homebrew/etc/chat-hache/   (brew dir, user-writable, root-readable)
-#   logs         -> /var/log/chat-hache/            (created with sudo once)
+#   config+certs -> /opt/homebrew/etc/chat-hector/   (brew dir, user-writable, root-readable)
+#   logs         -> /var/log/chat-hector/            (created with sudo once)
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -20,11 +20,11 @@ ENV_FILE="$(pwd)/.env"
 OWUI_BIN="$(pwd)/env/bin/open-webui"
 CADDY_BIN="$(pwd)/bin/caddy"
 SRC_CADDY_CONF="$(pwd)/Caddyfile"
-ROOT_ETC="/opt/homebrew/etc/chat-hache"
+ROOT_ETC="/opt/homebrew/etc/chat-hector"
 ROOT_CONF="${ROOT_ETC}/Caddyfile"
 DATA_DIR="$(pwd)/data"
 LOGS="$(pwd)/logs"
-ROOT_LOGS="/var/log/chat-hache"
+ROOT_LOGS="/var/log/chat-hector"
 SECRET_KEY_FILE="$(pwd)/.webui_secret_key"
 
 # 1) Stage TCC-safe copies for the root daemon
@@ -60,13 +60,13 @@ env_block() {
 }
 
 # ---- Open WebUI (user LaunchAgent) ----
-cat > "$HOME/Library/LaunchAgents/org.hache.chat.openwebui.plist" <<EOF
+cat > "$HOME/Library/LaunchAgents/app.hector.chat.openwebui.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>org.hache.chat.openwebui</string>
+	<string>app.hector.chat.openwebui</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>${OWUI_BIN}</string>
@@ -90,19 +90,19 @@ $(env_block DATA_DIR WEBUI_SECRET_KEY_FILE OAUTH_CLIENT_ID OAUTH_CLIENT_SECRET O
 </dict>
 </plist>
 EOF
-echo "openwebui plist -> $HOME/Library/LaunchAgents/org.hache.chat.openwebui.plist"
+echo "openwebui plist -> $HOME/Library/LaunchAgents/app.hector.chat.openwebui.plist"
 
 # ---- Model bridge (user LaunchAgent, 127.0.0.1:8484) ----
 # Reads .env itself (loadDotEnv in bridge/server.mjs) — only the node binary
 # path and working dir come from the plist. Restart-on-crash via KeepAlive.
 BRIDGE_BIN="$(command -v /opt/homebrew/bin/node || command -v node || echo /opt/homebrew/bin/node)"
-cat > "$HOME/Library/LaunchAgents/org.hache.chat.bridge.plist" <<BRIDGEEOF
+cat > "$HOME/Library/LaunchAgents/app.hector.chat.bridge.plist" <<BRIDGEEOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>org.hache.chat.bridge</string>
+	<string>app.hector.chat.bridge</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>${BRIDGE_BIN}</string>
@@ -121,16 +121,16 @@ cat > "$HOME/Library/LaunchAgents/org.hache.chat.bridge.plist" <<BRIDGEEOF
 </dict>
 </plist>
 BRIDGEEOF
-echo "bridge plist -> $HOME/Library/LaunchAgents/org.hache.chat.bridge.plist"
+echo "bridge plist -> $HOME/Library/LaunchAgents/app.hector.chat.bridge.plist"
 
 # ---- Whisper local STT worker (B40) ----
-cat > "$HOME/Library/LaunchAgents/org.hache.chat.whisper.plist" <<WHISPEREOF
+cat > "$HOME/Library/LaunchAgents/app.hector.chat.whisper.plist" <<WHISPEREOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>org.hache.chat.whisper</string>
+	<string>app.hector.chat.whisper</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>${PWD}/env/bin/python</string>
@@ -150,16 +150,16 @@ cat > "$HOME/Library/LaunchAgents/org.hache.chat.whisper.plist" <<WHISPEREOF
 </dict>
 </plist>
 WHISPEREOF
-echo "whisper plist -> $HOME/Library/LaunchAgents/org.hache.chat.whisper.plist"
+echo "whisper plist -> $HOME/Library/LaunchAgents/app.hector.chat.whisper.plist"
 
 # ---- Caddy (root LaunchDaemon, staged in /tmp; needs sudo to install) ----
-cat > /tmp/org.hache.chat.caddy.root.plist <<EOF
+cat > /tmp/app.hector.chat.caddy.root.plist <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>org.hache.chat.caddy</string>
+	<string>app.hector.chat.caddy</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>${CADDY_BIN}</string>
@@ -181,4 +181,4 @@ $(env_block PORKBUN_API_KEY PORKBUN_API_SECRET CHAT_TAILNET_IP XDG_DATA_HOME)
 </dict>
 </plist>
 EOF
-echo "caddy root plist -> /tmp/org.hache.chat.caddy.root.plist"
+echo "caddy root plist -> /tmp/app.hector.chat.caddy.root.plist"

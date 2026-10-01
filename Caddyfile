@@ -1,10 +1,10 @@
-# Chat · hache.app — TLS terminator (root daemon config)
+# Chat · hector.app — TLS terminator (root daemon config)
 # Installed from ui/Caddyfile by scripts/gen-plists.sh to
-# /opt/homebrew/etc/chat-hache/Caddyfile (TCC-safe for the root daemon;
+# /opt/homebrew/etc/chat-hector/Caddyfile (TCC-safe for the root daemon;
 # files under ~/Documents are TCC-blocked for root).
 # Two sites:
 #  1. https://localhost:8383  — local access on the Mac (mkcert local CA)
-#  2. https://chat.hache.app  — tailnet-only domain, Let's Encrypt via
+#  2. https://chat.hector.app  — tailnet-only domain, Let's Encrypt via
 #     DNS-01 (Porkbun API), bound to the Mac Mini tailnet IP.
 # B9: loopback + tailnet bindings only. B12: DNS via NextDNS Rewrite.
 # Storage: XDG_DATA_HOME=/opt/homebrew/var/lib (env in root plist) → certs at
@@ -17,11 +17,11 @@
 
 https://localhost:8383 {
 	bind 127.0.0.1 ::1
-	tls /opt/homebrew/etc/chat-hache/certs/localhost.pem /opt/homebrew/etc/chat-hache/certs/localhost-key.pem
+	tls /opt/homebrew/etc/chat-hector/certs/localhost.pem /opt/homebrew/etc/chat-hector/certs/localhost-key.pem
 	reverse_proxy 127.0.0.1:8390
 }
 
-chat.hache.app {
+chat.hector.app {
 	bind {$CHAT_TAILNET_IP}
 	tls {
 		dns porkbun {

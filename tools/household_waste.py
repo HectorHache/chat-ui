@@ -15,7 +15,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-_UA = "Chat-hache-household/1.0 (private home assistant)"
+_UA = "Chat-hector-household/1.0 (private home assistant)"
 
 
 # English-only built content (B22): translate Dutch municipality type names
@@ -36,7 +36,7 @@ def _en_type(raw: str) -> str:
 
 
 class Valves(BaseModel):
-    feed_urls: str = "/Users/mick/Documents/Workspaces/ui/data/waste/afval2026.ics"
+    feed_urls: str = os.path.expanduser("~/Documents/Workspaces/ui/data/waste/afval2026.ics")
     timezone_offset_hours: int = 2
 
 

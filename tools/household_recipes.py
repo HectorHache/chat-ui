@@ -35,7 +35,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-_UA = "Chat-hache-household/1.0 (private home assistant)"
+_UA = "Chat-hector-household/1.0 (private home assistant)"
 
 # Shared Household knowledge collection (owned by the admin) + its Recipes folder.
 _KB_ID = "8d2674fc-39f8-4876-aec7-a283932dd2ca"          # Household
@@ -79,7 +79,7 @@ def _api(method: str, path: str, payload: dict | None = None, multipart: tuple |
 
     if multipart is not None:
         filename, content, content_type = multipart
-        boundary = "----hachekb" + uuid.uuid4().hex
+        boundary = "----hectorkb" + uuid.uuid4().hex
         body = bytearray()
         body += (
             f"--{boundary}\r\n"

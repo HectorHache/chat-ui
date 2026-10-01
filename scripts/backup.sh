@@ -8,7 +8,7 @@
 # ============================================================================
 set -u
 
-DATA_DIR="${DATA_DIR:-/Users/mick/Documents/Workspaces/ui/data}"
+DATA_DIR="${DATA_DIR:-$HOME/Documents/Workspaces/ui/data}"
 BACKUP_DIR="$DATA_DIR/backups"
 mkdir -p "$BACKUP_DIR"
 

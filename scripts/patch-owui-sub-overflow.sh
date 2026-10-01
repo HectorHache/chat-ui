@@ -63,5 +63,5 @@ python3 -c "import ast; ast.parse(open('$F').read())" && echo "syntax OK"
 
 echo ""
 echo "Restart Open WebUI to load the patch:"
-echo "  launchctl bootout gui/\$(id -u)/org.hache.chat.openwebui; sleep 1;"
-echo "  launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/org.hache.chat.openwebui.plist"
+echo "  launchctl bootout gui/\$(id -u)/app.hector.chat.openwebui; sleep 1;"
+echo "  launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/app.hector.chat.openwebui.plist"

@@ -115,6 +115,6 @@ class Tools:
         )
 
     def _get_json(self, url: str) -> dict:
-        req = urllib.request.Request(url, headers={"User-Agent": "Chat-hache-household/1.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "Chat-hector-household/1.0"})
         with urllib.request.urlopen(req, timeout=12) as resp:
             return json.loads(resp.read().decode("utf-8"))

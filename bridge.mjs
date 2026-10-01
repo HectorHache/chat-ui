@@ -3,18 +3,22 @@
  * Chat·hector.app — local model bridge (127.0.0.1:8484)
  *
  * OpenAI-compatible endpoint fronting:
- *   1. AgentRouter (primary)   — WAF headers + AR_API_KEY in ONE place
+ *   1. Opus upstream (primary)     — Claude Opus 4.8 via Anthropic /v1/messages
+ *                                (its OpenAI route is Cloudflare-blocked here);
+ *                                dual free keys (primary, secondary) with primary->secondary failover.
  *   2. Vertex Gemini (fallback)— Google SDK-style JWT auth, auto-refresh,
  *                                EU region (`eu` short name; Google changed
  *                                regional hostnames — `eu-aiplatform` and
  *                                `europe-west4-aiplatform` hosts are INVALID).
+ *                                Also serves the Vision picker slot directly.
  *
  * Zero npm dependencies: node:http + global fetch + node:crypto.
  * Endpoints:
- *   GET  /health              → {status, agentrouter, vertex, uptime}
- *   GET  /v1/models           → curated 6-model list (OpenAI format)
- *   POST /v1/chat/completions → OpenAI format; streams SSE for AgentRouter
- *                                (passthrough) and Vertex (translated).
+ *   GET  /health              → {status, opus, vertex, uptime}
+ *   GET  /v1/models           → curated picker: Fast/Daily/Xtra (Opus) + Vision
+ *   POST /v1/chat/completions → OpenAI format; Opus tiers translate Anthropic
+ *                                SSE, Vertex translates Gemini SSE. the upstream down ->
+ *                                Vertex Gemini fallback (no user-facing error).
  *   POST /v1/audio/speech      → TTS via edge-tts (mp3).
  *   POST /v1/audio/transcriptions → STT (B40): Groq whisper-large-v3-turbo
  *                                primary, local faster-whisper worker
@@ -26,8 +30,9 @@
  * Env additions (B40): GROQ_API_KEY (optional — if unset, STT goes straight
  * to the local worker).
  *
- * Env (from ui/.env): AR_API_KEY, GOOGLE_APPLICATION_CREDENTIALS,
- * VERTEX_PROJECT_ID, VERTEX_REGION (default `eu`), BRIDGE_API_KEY.
+ * Env (from ui/.env): OPUS_API_KEY, OPUS_API_KEY_2 (Opus upstream),
+ *                     GOOGLE_APPLICATION_CREDENTIALS, VERTEX_PROJECT_ID,
+ *                     VERTEX_REGION (default `eu`), BRIDGE_API_KEY.
  * The bridge accepts requests with `Authorization: Bearer <BRIDGE_API_KEY>`
  * (OWUI connection uses it); if BRIDGE_API_KEY is unset, no auth required
  * (still loopback-bound only).
@@ -59,7 +64,10 @@ function loadDotEnv(file) {
   return env;
 }
 const ENV = loadDotEnv(path.join(ROOT, '.env'));
-const AR_API_KEY = process.env.AR_API_KEY || ENV.AR_API_KEY || '';
+const OPUS_KEYS = [
+  { name: 'primary',   key: process.env.OPUS_API_KEY   || ENV.OPUS_API_KEY   || '' },
+  { name: 'secondary', key: process.env.OPUS_API_KEY_2 || ENV.OPUS_API_KEY_2 || '' },
+].filter((k) => k.key);
 const VERTEX_REGION = process.env.VERTEX_REGION || ENV.VERTEX_REGION || 'eu';
 // Vertex failover: v1 = primary project, v2 = secondary project. Requests try
 // v1 first; on auth/HTTP/budget failure they fall through to v2 (and back to v1
@@ -81,23 +89,35 @@ const BRIDGE_KEY = process.env.BRIDGE_API_KEY || ENV.BRIDGE_API_KEY || '';
 const PORT = Number(process.env.BRIDGE_PORT || 8484);
 const HOST = process.env.BRIDGE_HOST || ENV.BRIDGE_HOST || '127.0.0.1';
 
-// ---------- AgentRouter ----------
-const AR_BASE = 'https://agentrouter.org/v1';
-const AR_HEADERS = {
-  'User-Agent': 'claude-cli/2.1.158 (external, sdk-cli)',
-  'x-app': 'cli',
-  'anthropic-beta': 'claude-code-20250219,interleaved-thinking-2025-05-14',
-};
-const AR_MODELS = ['deepseek-v4-flash', 'claude-opus-4-8', 'claude-opus-5', 'gpt-5.6-sol', 'glm-5.3'];
-const VERTEX_MODEL = 'gemini-3.8-flash'; // our curated Gemini id == Vertex publisher model
+// ---------- Opus upstream (Anthropic /v1/messages, dual-key failover) ----------
+// its OpenAI /chat/completions is Cloudflare-blocked (403) from this host, but
+// its Anthropic-native /v1/messages returns 200. We translate OpenAI<->Anthropic
+// here. Both keys (primary, secondary) are free; requests try primary first, then secondary; if BOTH
+// fail we fall back to Vertex Gemini so the user never sees an error.
+const OPUS_BASE = process.env.OPUS_BASE || ENV.OPUS_BASE || '';
+const OPUS_VERSION = '2023-06-01';
+const OPUS_MODEL = 'claude-opus-4-8'; // the only free model the upstream advertises
+const VERTEX_MODEL = 'gemini-3.8-flash'; // curated Gemini id == Vertex publisher model
 
+// Simplified family picker (le version 1). Fast/Daily/Xtra are all Opus 4.8 on
+// Opus upstream, chat-only (no tools). NOTE: Opus upstream exposes NO reasoning/thinking
+// parameter at all (provider-confirmed supported-params list is plain OpenAI:
+// temperature/top_p/max_tokens/stop/seed/... with nothing for reasoning; and a
+// budget sweep never moved output_tokens). So the Opus tiers cannot differ in
+// hidden reasoning depth - they differ only in ANSWER style via a per-tier
+// system steer + a max_tokens ceiling. `effort` below is used ONLY for the
+// Vertex-Gemini fallback (Gemini genuinely honors thinkingLevel). Vision keeps
+// the full household toolset + images.
+const OPUS_TIERS = {
+  'opus-fast':  { effort: null,     max: 4000,  steer: 'Answer in at most 2 short sentences. No lists, no headings, no code blocks, no examples, no elaboration. Give only the essential answer.' },
+  'opus-daily': { effort: 'medium', max: 8000,  steer: 'Give a clear, direct answer in a short paragraph. Be helpful but concise and avoid long digressions unless asked.' },
+  'opus-xtra':  { effort: 'high',   max: 28000, steer: 'Give a thorough, rigorous answer. Explain your reasoning, cover key trade-offs and edge cases, and use short headings or bullet points where they aid clarity.' },
+};
 const CURATED = [
-  { id: 'deepseek-v4-flash',     name: 'DeepSeek V4 Flash (fast)',      group: 'Fast',      provider: 'agentrouter' },
-  { id: 'claude-opus-4-8',       name: 'Claude Opus 4.8 (thinking)',    group: 'Thinking',  provider: 'agentrouter' },
-  { id: 'claude-opus-5',         name: 'Claude Opus 5 (thinking)',      group: 'Thinking',  provider: 'agentrouter' },
-  { id: 'gpt-5.6-sol',           name: 'GPT-5.6 Sol (thinking)',        group: 'Thinking',  provider: 'agentrouter' },
-  { id: 'glm-5.3',               name: 'GLM 5.3 (creative)',            group: 'Creative',  provider: 'agentrouter' },
-  { id: 'gemini-3.8-flash',      name: 'Gemini 3.8 Flash (vision)',     group: 'Gemini',    provider: 'vertex' },
+  { id: 'opus-fast',        name: '⚡ Fast',    group: 'Opus',   provider: 'opus' },
+  { id: 'opus-daily',       name: '💬 Daily',   group: 'Opus',   provider: 'opus' },
+  { id: 'opus-xtra',        name: '🧠 Xtra',    group: 'Opus',   provider: 'opus' },
+  { id: 'gemini-3.8-flash', name: '👁️ Vision',  group: 'Gemini', provider: 'vertex' },
 ];
 
 // ---------- Vertex JWT auth (auto-refresh) ----------
@@ -254,6 +274,11 @@ function toVertexTools(tools) {
   return decls.length ? [{ functionDeclarations: decls }] : undefined;
 }
 
+// Google's documented dummy thought-signature sentinel: the Gemini 3 validator
+// accepts it when a real signature is unavailable (verified live: a dummy on the
+// FIRST functionCall part clears the 400). Used only as a last-resort fallback.
+const DUMMY_SIG = 'context_engineering_is_the_way_to_go';
+
 /** Convert OpenAI messages → Gemini contents (text + base64 images + tools). */
 function toVertexBody(messages, opts) {
   const system = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
@@ -278,8 +303,15 @@ function toVertexBody(messages, opts) {
     if (historicalTool) continue;
     const parts = [];
 
-    // assistant tool_calls -> Gemini functionCall parts
+    // assistant tool_calls -> Gemini functionCall parts. Gemini 3 requires the
+    // FIRST functionCall part of each model turn to carry its thought_signature
+    // (parallel siblings need none). Replay the real captured signature when we
+    // have it; if it was lost (streamed detached and never captured, or history
+    // predates the registry) fall back to Google's documented dummy sentinel so
+    // the turn is accepted (verified live) instead of failing the whole request
+    // with HTTP 400 "Function call is missing a thought_signature".
     if (m.role === 'assistant' && Array.isArray(m.tool_calls)) {
+      const fcParts = [];
       for (const tc of m.tool_calls) {
         const fn = tc?.function || {};
         if (!fn.name) continue;
@@ -290,7 +322,9 @@ function toVertexBody(messages, opts) {
         const sig = tc.id ? toolCallSigs.get(tc.id) : undefined;
         if (sig) part.thoughtSignature = sig;
         parts.push(part);
+        fcParts.push(part);
       }
+      if (fcParts.length && !fcParts[0].thoughtSignature) fcParts[0].thoughtSignature = DUMMY_SIG;
     }
 
     const content = Array.isArray(m.content)
@@ -335,73 +369,20 @@ function toVertexBody(messages, opts) {
   }
   const body = { contents, generationConfig: {} };
   if (opts.max_tokens) body.generationConfig.maxOutputTokens = opts.max_tokens;
-  if (typeof opts.temperature === 'number') body.generationConfig.temperature = opts.temperature;
-  if (opts.top_p) body.generationConfig.topP = opts.top_p;
-  if (system) body.systemInstruction = { parts: [{ text: system }] };
-  if (opts.reasoning_effort) body.generationConfig.thinkingConfig = { thinkingBudget: opts.reasoning_effort === 'low' ? 1024 : 8192 };
+  // Gemini 3.8 family: temperature/top_p/top_k are deprecated (ignored by the
+  // backend) and integer thinking budgets are deprecated in favor of the
+  // thinking_level enum — see cloud docs "Developer's guide to Gemini 3.8 Flash".
+  // We deliberately drop them from the payload instead of forwarding no-ops.
+  if (opts.reasoning_effort) {
+    const level = opts.reasoning_effort === 'low' ? 'LOW' : opts.reasoning_effort === 'high' ? 'HIGH' : 'MEDIUM';
+    body.generationConfig.thinkingConfig = { thinkingLevel: level };
+  }
   const tools = toVertexTools(opts.tools);
   if (tools) body.tools = tools;
   return body;
 }
 
 let vprovActive = null; // last provider that served a request
-
-// ---------- Language detector (B43) ----------
-// Routes Spanish / non-English content to Vertex, because AgentRouter
-// content-blocks anything it can't serve in English. AgentRouter sees the WHOLE
-// conversation history, so if ANY user turn is Spanish the entire request is
-// Spanish to it and would be content-blocked. Therefore we classify EVERY user
-// textual turn and route to Vertex if any of them is non-English. We stay on
-// AgentRouter only when all user turns are confidently English; anything
-// ambiguous/unknown routes to Vertex (the safe direction — Vertex handles both
-// languages, AgentRouter handles only English).
-const _normW = (w) => String(w).toLowerCase()
-  .replace(/[áàäâ]/g, 'a').replace(/[éèëê]/g, 'e').replace(/[íìïî]/g, 'i')
-  .replace(/[óòöô]/g, 'o').replace(/[úùüû]/g, 'u').replace(/ñ/g, 'n');
-const ES_SET = new Set(`
-  hola que como estas esta estamos dame danos da receta recetas magdalena magdalenas
-  bizcocho tortilla natillas croquetas empanadillas ingrediente ingredientes harina azucar
-  huevo huevos aceite horno cebolla ajo yogur yogurt leche agua pan sal pimienta queso tomate
-  guarda guardar guardada guardado guardame puedes podrias quiero necesito necesitamos tenemos
-  tengo tienes dime muestrame gracias favor bien mal hoy manana ayer pero tambien por con para
-  sin sobre el la los las un una y o mi mis tu tus del al cuando donde porque cual cuales haz ver
-  hazme anade agrega mezcla hornea precalienta echa vierte pela corta cuece espera cuanto cuantos
-  cuanta minutos grados tapa remueve deja saca pon hazte nuez nueces
-`.split(/\s+/).filter(Boolean).map(_normW));
-const EN_SET = new Set(`
-  the a an and or but if of to in for with on at by from is are was were be been have has had
-  do does did will would can could should may might you your yours we our us he she it its they
-  them this that these those what which who whom how why when where there here me my not no
-  yes ok okay sure thanks thank please hello hi hey give tell show list store save saved add
-  want need make got good great fine right one two three recipes recipe ingredients ingredient
-  muffins pecan
-`.split(/\s+/).filter(Boolean).map(_normW));
-const ACCENT = /[áéíóúüñ]/i;
-function isSpanishTurn(text) {
-  const raw = String(text || '');
-  if (!raw.trim()) return false;
-  if (ACCENT.test(raw)) return true;
-  const toks = raw.toLowerCase().match(/[a-záéíóúüñ]+/g) || [];
-  if (!toks.length) return false;
-  let es = 0; let en = 0;
-  for (const w of toks) {
-    const n = _normW(w);
-    if (ES_SET.has(n)) es++;
-    else if (EN_SET.has(n)) en++;
-  }
-  if (es === 0 && en === 0) return true; // unknown/ambiguous -> treat as non-English
-  return es >= en; // Spanish wins ties; English only if clearly dominant
-}
-function shouldRouteToVertex(messages) {
-  let sawUserText = false;
-  for (const m of messages || []) {
-    if (m && m.role === 'user' && typeof m.content === 'string') {
-      sawUserText = true;
-      if (isSpanishTurn(m.content)) return true;
-    }
-  }
-  return !sawUserText; // no user text present -> default to Vertex (safe)
-}
 
 
 async function vertexFetch(prov, messages, opts, stream) {
@@ -475,6 +456,8 @@ async function vertexChat(messages, opts, stream, res) {
   const created = Math.floor(Date.now() / 1000);
   let first = true;
   let sawToolCalls = false;
+  let turnSig = null;   // most recent thoughtSignature seen this response (Gemini 3 may stream it detached, on a later/empty part)
+  let firstFcId = null; // id of the first functionCall this response — the only part that must carry the signature on replay
   let usg = null; // real usage from Gemini usageMetadata (stream end)
   let accChars = 0; // fallback completion-token estimate if usageMetadata absent
   try {
@@ -497,6 +480,7 @@ async function vertexChat(messages, opts, stream, res) {
         const text = parts.map((p) => p.text || '').join('');
         const thought = parts.map((p) => p.thought || '').join('');
         const fcParts = parts.filter((p) => p.functionCall);
+        for (const p of parts) { if (p.thoughtSignature) turnSig = p.thoughtSignature; }
         accChars += text.length + thought.length + fcParts.reduce((n, fc) => n + (fc?.functionCall?.args ? JSON.stringify(fc.functionCall.args).length : 0), 0);
         if (first) {
           send({ id: `chatcmpl-vx-${created}`, object: 'chat.completion.chunk', created, model: VERTEX_MODEL, choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }] });
@@ -508,13 +492,167 @@ async function vertexChat(messages, opts, stream, res) {
           const fc = fcParts[fi].functionCall;
           sawToolCalls = true;
           const cid = fc.id || `call_vx_${fi}`;
+          if (firstFcId === null) firstFcId = cid;
           if (fcParts[fi].thoughtSignature) setSig(cid, fcParts[fi].thoughtSignature);
           send({ id: `chatcmpl-vx-${created}`, object: 'chat.completion.chunk', created, model: VERTEX_MODEL, choices: [{ index: 0, delta: { tool_calls: [{ index: fi, id: cid, type: 'function', function: { name: fc.name, arguments: JSON.stringify(fc.args || {}) } }] }, finish_reason: null }] });
         }
       }
     }
+    // If the signature streamed in detached from its functionCall part (Gemini's
+    // "empty part in the final chunk" behaviour), bind it to the first tool call
+    // so the next turn replays a real signature instead of the dummy fallback.
+    if (firstFcId && turnSig && !toolCallSigs.has(firstFcId)) setSig(firstFcId, turnSig);
     send({ id: `chatcmpl-vx-${created}`, object: 'chat.completion.chunk', created, model: VERTEX_MODEL, choices: [{ index: 0, delta: {}, finish_reason: sawToolCalls ? 'tool_calls' : 'stop' }] });
     send({ id: `chatcmpl-vx-${created}`, object: 'chat.completion.chunk', created, model: VERTEX_MODEL, choices: [], usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } });
+    res.end();
+  } catch (e) {
+    res.write(`data: ${JSON.stringify({ error: { message: String(e.message) } })}\n\n`);
+    res.end();
+  }
+}
+
+// ---------- Opus upstream (OpenAI <-> Anthropic translation) ----------
+
+// OpenAI chat messages -> Anthropic {system, messages}. Opus tiers are chat-only:
+// tool definitions and tool/assistant-tool_call turns are dropped (Vision handles
+// tools). Images (data URLs) are forwarded as Anthropic image blocks.
+function toAnthropicBody(messages, opts) {
+  const sysParts = [];
+  const amsgs = [];
+  for (const m of messages || []) {
+    if (!m) continue;
+    if (m.role === 'system') {
+      const t = typeof m.content === 'string' ? m.content
+        : Array.isArray(m.content) ? m.content.map((c) => (typeof c === 'string' ? c : c.text || '')).join('') : '';
+      if (t.trim()) sysParts.push(t);
+      continue;
+    }
+    if (m.role !== 'user' && m.role !== 'assistant') continue; // drop tool turns
+    if (m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length && !m.content) continue;
+    let content;
+    if (typeof m.content === 'string') {
+      content = m.content;
+    } else if (Array.isArray(m.content)) {
+      const blocks = [];
+      for (const c of m.content) {
+        if (typeof c === 'string') { if (c) blocks.push({ type: 'text', text: c }); }
+        else if (c.type === 'text' && c.text) blocks.push({ type: 'text', text: c.text });
+        else if (c.type === 'image_url' && c.image_url?.url?.startsWith('data:image')) {
+          const mm = c.image_url.url.match(/^data:(image\/[a-z+]+);base64,(.+)$/i);
+          if (mm) blocks.push({ type: 'image', source: { type: 'base64', media_type: mm[1], data: mm[2] } });
+        } else if (c.type === 'image' && c.image?.data) {
+          blocks.push({ type: 'image', source: { type: 'base64', media_type: c.image.mimeType || 'image/png', data: c.image.data } });
+        }
+      }
+      content = blocks;
+    } else content = '';
+    amsgs.push({ role: m.role, content });
+  }
+  // Anthropic requires non-empty, user-first messages. Drop empties and merge
+  // consecutive same-role turns.
+  const cleaned = [];
+  const isEmpty = (c) => (typeof c === 'string' ? !c.trim() : (!Array.isArray(c) || c.length === 0));
+  for (const msg of amsgs) {
+    if (isEmpty(msg.content)) continue;
+    const prev = cleaned[cleaned.length - 1];
+    if (prev && prev.role === msg.role) {
+      const toArr = (x) => (Array.isArray(x) ? x : [{ type: 'text', text: String(x) }]);
+      prev.content = [...toArr(prev.content), ...toArr(msg.content)];
+    } else cleaned.push({ role: msg.role, content: msg.content });
+  }
+  while (cleaned.length && cleaned[0].role !== 'user') cleaned.shift();
+  if (!cleaned.length) cleaned.push({ role: 'user', content: 'Hello' });
+  if (opts.steer) sysParts.push(opts.steer);
+  // Opus upstream exposes NO reasoning/thinking parameter (provider-confirmed param
+  // list + a budget sweep that never moved output_tokens), so we send none. The
+  // tiers differ only by the system steer above + this max_tokens ceiling.
+  const body = { model: OPUS_MODEL, max_tokens: opts.max_tokens || 4096, messages: cleaned };
+  if (sysParts.length) body.system = sysParts.join('\n\n');
+  return body;
+}
+
+let jwActive = null; // last the upstream key that served a request
+
+async function jwFetch(k, body, stream) {
+  const resp = await fetch(`${OPUS_BASE}/messages`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': k.key, 'anthropic-version': OPUS_VERSION },
+    body: JSON.stringify({ ...body, stream: !!stream }),
+    signal: AbortSignal.timeout(180_000),
+  });
+  if (!resp.ok) throw new Error(`the upstream[${k.name}] HTTP ${resp.status} ${(await resp.text().catch(() => '')).slice(0, 200)}`);
+  return resp;
+}
+
+// Try py then zen; throws (before writing any response) only if BOTH keys fail,
+// letting the caller fall back to Vertex.
+async function jwChat(messages, opts, stream, res) {
+  const body = toAnthropicBody(messages, opts);
+  let resp = null; let lastErr = null;
+  for (const k of OPUS_KEYS) {
+    try { resp = await jwFetch(k, body, stream); jwActive = k.name; break; }
+    catch (e) { lastErr = e; console.error(`[bridge] the upstream key ${k.name} failed: ${e.message}`); }
+  }
+  if (!resp) throw lastErr || new Error('the upstream: no keys configured');
+
+  if (!stream) {
+    const j = await resp.json();
+    const blocks = j.content || [];
+    const text = blocks.filter((b) => b.type === 'text').map((b) => b.text).join('');
+    const thinking = blocks.filter((b) => b.type === 'thinking').map((b) => b.thinking).join('');
+    const usage = j.usage || {};
+    const message = { role: 'assistant', content: text || null };
+    if (thinking) message.reasoning_content = thinking;
+    const out = {
+      id: `chatcmpl-jw-${crypto.randomBytes(8).toString('hex')}`,
+      object: 'chat.completion',
+      created: Math.floor(Date.now() / 1000),
+      model: OPUS_MODEL,
+      choices: [{ index: 0, message, finish_reason: j.stop_reason === 'end_turn' ? 'stop' : (j.stop_reason || 'stop') }],
+      usage: {
+        prompt_tokens: usage.input_tokens || 0,
+        completion_tokens: usage.output_tokens || 0,
+        total_tokens: (usage.input_tokens || 0) + (usage.output_tokens || 0),
+      },
+    };
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(out));
+    return;
+  }
+
+  // stream: Anthropic SSE -> OpenAI SSE
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+  const created = Math.floor(Date.now() / 1000);
+  const id = `chatcmpl-jw-${created}`;
+  const send = (delta, finish = null) => res.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model: OPUS_MODEL, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`);
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let finish = 'stop';
+  try {
+    send({ role: 'assistant' });
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, idx).trim();
+        buf = buf.slice(idx + 1);
+        if (!line.startsWith('data:')) continue;
+        let ev; try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
+        if (ev.type === 'content_block_delta') {
+          const d = ev.delta || {};
+          if (d.type === 'text_delta' && d.text) send({ content: d.text });
+          else if (d.type === 'thinking_delta' && d.thinking) send({ reasoning_content: d.thinking });
+        } else if (ev.type === 'message_delta' && ev.delta?.stop_reason) {
+          finish = ev.delta.stop_reason === 'end_turn' ? 'stop' : ev.delta.stop_reason;
+        }
+      }
+    }
+    send({}, finish);
+    res.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model: OPUS_MODEL, choices: [], usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } })}\n\n`);
+    res.write('data: [DONE]\n\n');
     res.end();
   } catch (e) {
     res.write(`data: ${JSON.stringify({ error: { message: String(e.message) } })}\n\n`);
@@ -553,14 +691,18 @@ function loadSigs() {
 }
 loadSigs();
 let started = Date.now();
-let health = { agentrouter: 'unknown', vertex: 'unknown', vertex1: 'unknown', vertex2: 'unknown', vertexActive: null, lastCheck: 0 };
+let health = { opus: 'unknown', vertex: 'unknown', vertex1: 'unknown', vertex2: 'unknown', vertexActive: null, lastCheck: 0 };
 
 async function checkHealth() {
   const out = {};
   try {
-    const r = await fetch(`${AR_BASE}/models`, { headers: { Authorization: `Bearer ${AR_API_KEY}`, ...AR_HEADERS }, signal: AbortSignal.timeout(8000) });
-    out.agentrouter = r.ok ? 'ok' : `http_${r.status}`;
-  } catch (e) { out.agentrouter = 'down'; }
+    const k = OPUS_KEYS[0];
+    if (!k) { out.opus = 'nokey'; }
+    else {
+      const r = await fetch(`${OPUS_BASE}/models`, { headers: { 'x-api-key': k.key, 'anthropic-version': OPUS_VERSION }, signal: AbortSignal.timeout(8000) });
+      out.opus = r.ok ? 'ok' : `http_${r.status}`;
+    }
+  } catch (e) { out.opus = 'down'; }
   for (const prov of VERTEX_PROVIDERS) {
     try {
       await vertexToken(prov);
@@ -651,7 +793,7 @@ const server = http.createServer(async (req, res) => {
       }
       const tmp = `/tmp/owui-tts-${crypto.randomBytes(8).toString('hex')}.mp3`;
       try {
-        const py = process.env.TTS_PYTHON || '/Users/mick/Documents/Workspaces/ui/env/bin/python';
+        const py = process.env.TTS_PYTHON || 'python3';
         await new Promise((resolve, reject) => {
           const proc = spawn(py, ['-m', 'edge_tts', '--voice', voice, '--text', text, '--write-media', tmp], { stdio: 'ignore' });
           proc.on('error', reject);
@@ -792,98 +934,34 @@ const server = http.createServer(async (req, res) => {
       let raw = '';
       for await (const chunk of req) raw += chunk;
       const body = JSON.parse(raw || '{}');
-      const model = body.model || 'deepseek-v4-flash';
+      const model = body.model || 'opus-daily';
       const messages = body.messages || [];
       const stream = !!body.stream;
 
-      // Vertex-native model → always Vertex
+      // Vision -> Vertex Gemini (keeps tools + images), max thinking by default.
       if (model === VERTEX_MODEL) {
-        await vertexChat(messages, body, stream, res);
+        await vertexChat(messages, { ...body, reasoning_effort: body.reasoning_effort || 'high' }, stream, res);
         return;
       }
 
-      // ---- Language router (B43) ----
-      // AgentRouter's catalog is effectively English-only: it returns
-      // `content-blocked` on Spanish/non-English content (verified live across
-      // deepseek/glm/claude). Gemini (Vertex) accepts any language AND — since
-      // our schema sanitizer + thoughtSignature loop landed — completes full
-      // function-calling rounds in those languages too. So when a request is
-      // predominantly non-English we route the WHOLE conversation to Vertex,
-      // even tool requests (previously tool requests were barred from Vertex
-      // because schemas/history broke the loop; that's now fixed). English
-      // stays on the user-selected AgentRouter model.
-      if (shouldRouteToVertex(messages)) {
-        console.error(`[bridge] language router: routing ${model} -> Vertex (non-English content)`);
-        await vertexChat(messages, { ...body, max_tokens: body.max_tokens || 2048 }, stream, res);
+      // Opus tiers (Fast/Daily/Xtra) + any legacy claude-opus id -> Opus upstream,
+      // primary->secondary failover, then Vertex Gemini fallback if BOTH the upstream keys are down.
+      const tier = OPUS_TIERS[model] || (model.startsWith('claude-opus') ? OPUS_TIERS['opus-daily'] : null);
+      if (tier) {
+        const opts = { ...body, steer: tier.steer, max_tokens: tier.max };
+        try {
+          await jwChat(messages, opts, stream, res);
+        } catch (e) {
+          console.error(`[bridge] Opus upstream unavailable, Vertex Gemini fallback: ${e.message}`);
+          if (res.headersSent) return;
+          await vertexChat(messages, { ...body, reasoning_effort: tier.effort || 'medium', max_tokens: 4096 }, stream, res);
+        }
         return;
       }
 
-      // AgentRouter model → AR first, Vertex fallback on failure
-      const arUrl = `${AR_BASE}/chat/completions`;
-      const arHeaders = {
-        Authorization: `Bearer ${AR_API_KEY}`,
-        'Content-Type': 'application/json',
-        ...AR_HEADERS,
-      };
-      try {
-        const arResp = await fetch(arUrl, { method: 'POST', headers: arHeaders, body: JSON.stringify(body), signal: AbortSignal.timeout(180_000) });
-        if (!arResp.ok) {
-          let detail = '';
-          try { detail = (await arResp.text()).slice(0, 500); } catch (_) { /* ignore */ }
-          throw new Error(`AgentRouter HTTP ${arResp.status}${detail ? ': ' + detail : ''}`);
-        }
-        if (stream) {
-          // transparent SSE passthrough
-          res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-          const reader = arResp.body.getReader();
-          const decoder = new TextDecoder();
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              res.write(decoder.decode(value, { stream: true }));
-            }
-            res.end();
-          } catch (e) {
-            res.end();
-          }
-          return;
-        }
-        // non-stream passthrough
-        const j = await arResp.json();
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(j));
-      } catch (e) {
-        // Vertex/Gemini cannot safely continue a FUNCTION-CALLING conversation:
-        //  (a) several of our tool JSON schemas (e.g. exclusiveMinimum / nested
-        //      "type") are rejected by Gemini's function_declarations validator,
-        //  (b) history from a provider-switch mid function-loop breaks Gemini's
-        //      "function response parts == function call parts" rule.
-        // So for tool requests we do NOT fall back to Vertex — we surface the real
-        // AgentRouter error instead (previously it was swallowed and replaced by a
-        // misleading Vertex 400). Plain (tool-less) requests still fall back fine.
-        const hadTools = Array.isArray(body.tools) && body.tools.length > 0;
-        const hadToolTurn = (messages || []).some(
-          (m) => m.role === 'tool' || ((m.role === 'assistant') && Array.isArray(m.tool_calls) && m.tool_calls.length > 0)
-        );
-        if (hadTools || hadToolTurn) {
-          console.error(`[bridge] agentrouter failed on a function-calling request (no vertex fallback): ${e.message}`);
-          res.writeHead(502, { 'Content-Type': 'application/json' });
-          return res.end(
-            JSON.stringify({
-              error: {
-                message:
-                  'AgentRouter upstream error on a tool request (no Vertex fallback): ' + String(e.message) +
-                  ' — please retry; if it persists the model gateway is the problem.',
-              },
-            })
-          );
-        }
-        console.error(`[bridge] agentrouter failed, falling back to Vertex: ${e.message}`);
-        const fbMsg = messages.map((m) => ({ ...m, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }));
-        await vertexChat(fbMsg, { ...body, max_tokens: body.max_tokens || 2048 }, stream, res);
-        return;
-      }
+      // Anything else (legacy task models, unknown ids) -> Vertex Gemini.
+      await vertexChat(messages, { ...body, max_tokens: body.max_tokens || 2048 }, stream, res);
+      return;
     }
 
     res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -895,5 +973,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`bridge listening on http://${HOST}:${PORT} (region ${VERTEX_REGION}, vertex=${VERTEX_MODEL}, vertexProviders=${VERTEX_PROVIDERS.map((p) => p.name).join('+')}, agentrouter=${AR_MODELS.join(',')})`);
+  console.log(`bridge listening on http://${HOST}:${PORT} (region ${VERTEX_REGION}, vertex=${VERTEX_MODEL}, vertexProviders=${VERTEX_PROVIDERS.map((p) => p.name).join('+')}, opus=${OPUS_KEYS.map((k) => k.name).join('+') || 'none'})`);
 });

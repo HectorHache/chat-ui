@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 _UI_DIR = Path(os.environ.get("UI_DIR") or Path.home() / "Documents/Workspaces/ui")
 _DATA_DIR = Path(os.environ.get("DATA_DIR") or _UI_DIR / "data")
-_UA = "Chat-hache-household/1.0 (private home assistant)"
+_UA = "Chat-hector-household/1.0 (private home assistant)"
 _TZ = ZoneInfo("Europe/Amsterdam")
 
 _ICS_CACHE: dict = {"t": 0.0, "body": ""}

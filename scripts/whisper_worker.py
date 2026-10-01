@@ -11,7 +11,7 @@ bridge as the OFFLINE fallback for /v1/audio/transcriptions (Groq primary):
 Runs faster-whisper (CTranslate2, int8, no torch) with the model loaded once;
 first start downloads ~1.7 GB from HuggingFace to ~/.cache/huggingface.
 
-Launchd user agent org.hache.chat.whisper (TCC-safe: env/bin/python).
+Launchd user agent app.hector.chat.whisper (TCC-safe: env/bin/python).
 """
 
 import argparse

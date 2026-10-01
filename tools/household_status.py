@@ -54,7 +54,7 @@ class Tools:
         ]
         for url, label in probes:
             try:
-                req = urllib.request.Request(url, headers={"User-Agent": "Chat-hache-household/1.0"})
+                req = urllib.request.Request(url, headers={"User-Agent": "Chat-hector-household/1.0"})
                 with urllib.request.urlopen(req, timeout=6) as resp:
                     ok = resp.status == 200
                 lines.append(f"- {label}: {'OK' if ok else 'FAIL'} (HTTP {resp.status})")

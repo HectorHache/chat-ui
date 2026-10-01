@@ -16,7 +16,7 @@ import sys
 import tarfile
 from datetime import datetime, timezone
 
-DATA_DIR = pathlib.Path(os.environ.get("DATA_DIR", "/Users/mick/Documents/Workspaces/ui/data"))
+DATA_DIR = pathlib.Path(os.environ.get("DATA_DIR", os.path.expanduser("~/Documents/Workspaces/ui/data")))
 BACKUP_DIR = DATA_DIR / "backups"
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE = BACKUP_DIR / "backup.log"

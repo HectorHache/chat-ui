@@ -13,9 +13,9 @@
 #   4. Writes logs to logs/auto-update.log (silent unless failure -> alert)
 # ============================================================================
 set -u
-cd /Users/mick/Documents/Workspaces/ui || exit 1
+cd $HOME/Documents/Workspaces/ui || exit 1
 
-DATA_DIR="/Users/mick/Documents/Workspaces/ui/data"
+DATA_DIR="$HOME/Documents/Workspaces/ui/data"
 LOG="logs/auto-update.log"
 STAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 echo "$STAMP auto-update start" >> "$LOG"
@@ -55,7 +55,7 @@ bash scripts/patch-owui-sub-overflow.sh >> "$LOG" 2>&1 || {
 }
 
 # --- restart OWUI agent ----------------------------------------------------
-launchctl kickstart -k "gui/$(id -u)/org.hache.chat.openwebui" >> "$LOG" 2>&1
+launchctl kickstart -k "gui/$(id -u)/app.hector.chat.openwebui" >> "$LOG" 2>&1
 sleep 16  # OWUI startup
 
 # --- smoke tests -----------------------------------------------------------
@@ -72,7 +72,7 @@ if [ "$smoke_ok" -ne 1 ]; then
   echo "$STAMP FAIL: smoke test — rolling back to $PINNED" >> "$LOG"
   env/bin/pip install --quiet "open-webui==$PINNED" >> "$LOG" 2>&1
   bash scripts/patch-owui-sub-overflow.sh >> "$LOG" 2>&1
-  launchctl kickstart -k "gui/$(id -u)/org.hache.chat.openwebui" >> "$LOG" 2>&1
+  launchctl kickstart -k "gui/$(id -u)/app.hector.chat.openwebui" >> "$LOG" 2>&1
   sleep 16
   echo "$STAMP rolled back to $PINNED" >> "$LOG"
   exit 1

@@ -12,7 +12,7 @@ import urllib.request
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-_UA = "Chat-hache-household/1.0 (private home assistant)"
+_UA = "Chat-hector-household/1.0 (private home assistant)"
 
 WMO = {
     0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",

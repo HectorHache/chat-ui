@@ -24,14 +24,14 @@ import time
 import urllib.request
 from datetime import datetime, timezone
 
-UI_DIR = pathlib.Path("/Users/mick/Documents/Workspaces/ui")
+UI_DIR = pathlib.Path(os.path.expanduser("~/Documents/Workspaces/ui"))
 DATA_DIR = pathlib.Path(os.environ.get("DATA_DIR", str(UI_DIR / "data")))
 LOG_FILE = UI_DIR / "logs" / "auto-update.log"
 PIN_FILE = UI_DIR / ".owui-version"
 ENV_PY = UI_DIR / "env" / "bin" / "python"
 BRIDGE_KEY = ""
 
-LAUNCHD_LABEL = f"gui/{os.getuid()}/org.hache.chat.openwebui"
+LAUNCHD_LABEL = f"gui/{os.getuid()}/app.hector.chat.openwebui"
 
 
 def log(msg: str) -> None:

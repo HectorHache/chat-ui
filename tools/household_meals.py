@@ -15,7 +15,7 @@ import urllib.request
 from pathlib import Path
 
 _DATA_DIR = Path(os.environ.get("DATA_DIR") or (Path.home() / "Documents/Workspaces/ui/data"))
-_UA = "Chat-hache-household/1.0 (private home assistant)"
+_UA = "Chat-hector-household/1.0 (private home assistant)"
 
 
 def _plan_path(user_id: str) -> Path:

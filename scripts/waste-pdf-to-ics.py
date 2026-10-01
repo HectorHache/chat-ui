@@ -174,7 +174,7 @@ def parse(pdf_path, year):
 
 def to_ics(events, cal_name):
     lines = ["BEGIN:VCALENDAR", "VERSION:2.0",
-             "PRODID:-//Chat-hache//Afvalkalender//NL",
+             "PRODID:-//Chat-hector//Afvalkalender//NL",
              "CALSCALE:GREGORIAN", f"X-WR-CALNAME:{cal_name}"]
     for (d, t) in events:
         lines += [

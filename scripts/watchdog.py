@@ -37,9 +37,9 @@ import time
 import urllib.request
 from datetime import datetime, timezone
 
-DATA_DIR = pathlib.Path(os.environ.get("DATA_DIR", "/Users/mick/Documents/Workspaces/ui/data"))
+DATA_DIR = pathlib.Path(os.environ.get("DATA_DIR", os.path.expanduser("~/Documents/Workspaces/ui/data")))
 WD_DIR = DATA_DIR / "watchdog"
-UI_DIR = pathlib.Path("/Users/mick/Documents/Workspaces/ui")
+UI_DIR = pathlib.Path(os.path.expanduser("~/Documents/Workspaces/ui"))
 WD_DIR.mkdir(parents=True, exist_ok=True)
 STATUS_FILE = WD_DIR / "status.json"
 ALERT_LOG = WD_DIR / "alerts.log"
